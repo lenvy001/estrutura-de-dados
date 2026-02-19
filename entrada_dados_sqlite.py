@@ -80,14 +80,14 @@ def solicitar_aprovacao_gerente():
     print("\n🔒 Aprovação do gerente necessária")
     nome = input("Nome do gerente: ").strip()
     senha = input("Senha do gerente: ").strip()
-    nivel = verificar_acesso(nome, senha)
-    if nivel == 1:
+    cargo = verificar_acesso(nome, senha)
+    if cargo == "gerente":
         print("✅ Aprovação concedida\n")
         return True
     print("❌ Aprovação negada\n")
     return False
 
-def menu(nivel_acesso):
+def menu(cargo_acesso):
     criar_tabela()
     while True:
         print("\n=== MENU ESTOQUE ===")
@@ -98,10 +98,8 @@ def menu(nivel_acesso):
         opcao = input("\nEscolha uma opção: ").strip()
         
         if opcao == "1":
-            if nivel_acesso == 3:
-                print("❌ Acesso negado: nível 3 não pode inserir.\n")
-                continue
-            if nivel_acesso == 2 and not solicitar_aprovacao_gerente():
+            if cargo_acesso == "operado":
+                print("❌ Acesso negado: operado não pode inserir.\n")
                 continue
             nome = input("Nome do produto: ").strip()
             try:
@@ -112,10 +110,8 @@ def menu(nivel_acesso):
                 print("❌ Entrada inválida!")
                 
         elif opcao == "2":
-            if nivel_acesso == 3:
-                print("❌ Acesso negado: nível 3 não pode deletar.\n")
-                continue
-            if nivel_acesso == 2 and not solicitar_aprovacao_gerente():
+            if cargo_acesso == "operado":
+                print("❌ Acesso negado: operado não pode deletar.\n")
                 continue
             nome = input("Nome do produto a deletar: ").strip()
             deletar_dados(nome)
@@ -132,8 +128,8 @@ def menu(nivel_acesso):
 if __name__ == "__main__":
     criar_tabela()
     cria_tabela_usuarios()
-    nome_logado, nivel = login_usuario()
-    if nivel is None:
+    nome_logado, cargo = login_usuario()
+    if cargo is None:
         print("\n❌ Login inválido. Encerrando.")
     else:
-        menu(nivel)
+        menu(cargo)

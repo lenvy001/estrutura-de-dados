@@ -1,16 +1,18 @@
 import sqlite3
 import hashlib
 
-CARGOS = {
+CARGOS_VALIDOS = ("gerente", "supervisor", "operado")
+
+NIVEL_PARA_CARGO = {
     1: "gerente",
     2: "supervisor",
-    3: "funcionario"
+    3: "operado"
 }
 
 PERMISSOES = {
-    1: "acesso total ao banco de dados",
-    2: "acesso total, mas alteracoes aplicadas somente com confirmacao do nivel 1",
-    3: "acesso apenas para visualizacao dos dados"
+    "gerente": "acesso total ao banco de dados",
+    "supervisor": "acesso total ao banco de dados",
+    "operado": "acesso apenas para visualizacao dos dados"
 }
 
 def conectar_db():
@@ -28,7 +30,7 @@ def cria_tabela_usuarios():
                 nome TEXT NOT NULL UNIQUE,
                 senha_hash TEXT NOT NULL,
                 salario REAL NOT NULL CHECK (salario > 0),
-                nivel_acesso INTEGER NOT NULL CHECK (nivel_acesso IN (1, 2, 3)),
+                cargo TEXT NOT NULL CHECK (cargo IN ('gerente', 'supervisor', 'operado')),
                 ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0, 1))
             )
         """)
@@ -39,8 +41,20 @@ def cria_tabela_usuarios():
         if "salario" not in colunas:
             cursor.execute("ALTER TABLE usuarios ADD COLUMN salario REAL NOT NULL DEFAULT 1")
 
-        if "nivel_acesso" not in colunas:
-            cursor.execute("ALTER TABLE usuarios ADD COLUMN nivel_acesso INTEGER NOT NULL DEFAULT 3")
+        if "cargo" not in colunas:
+            cursor.execute("ALTER TABLE usuarios ADD COLUMN cargo TEXT NOT NULL DEFAULT 'operado'")
+
+        if "nivel_acesso" in colunas:
+            cursor.execute("SELECT id, nivel_acesso, cargo FROM usuarios")
+            usuarios = cursor.fetchall()
+            for usuario_id, nivel_legado, cargo_atual in usuarios:
+                if cargo_atual:
+                    continue
+                cargo_migrado = NIVEL_PARA_CARGO.get(nivel_legado, "operado")
+                cursor.execute(
+                    "UPDATE usuarios SET cargo = ? WHERE id = ?",
+                    (cargo_migrado, usuario_id)
+                )
 
         if "senha_hash" not in colunas and "senha" in colunas:
             cursor.execute("ALTER TABLE usuarios ADD COLUMN senha_hash TEXT")
@@ -59,10 +73,14 @@ def cria_tabela_usuarios():
         if "senha_hash" in colunas:
             cursor.execute("UPDATE usuarios SET senha_hash = '' WHERE senha_hash IS NULL")
 
+        cursor.execute("UPDATE usuarios SET cargo = 'operado' WHERE cargo IS NULL OR TRIM(cargo) = ''")
+        cursor.execute("UPDATE usuarios SET cargo = 'operado' WHERE cargo = 'funcionario' OR cargo = 'operador'")
+
         conn.commit()
 
-def cria_usuario(nome, senha, salario, nivel_acesso):
+def cria_usuario(nome, senha, salario, cargo):
     nome = nome.strip()
+    cargo = cargo.strip().lower()
 
     if not nome:
         print("❌ Nome obrigatório\n")
@@ -70,8 +88,8 @@ def cria_usuario(nome, senha, salario, nivel_acesso):
     if salario <= 0:
         print("❌ Salário deve ser maior que zero\n")
         return
-    if nivel_acesso not in (1, 2, 3):
-        print("❌ Nível inválido! Use 1, 2 ou 3\n")
+    if cargo not in CARGOS_VALIDOS:
+        print("❌ Cargo inválido! Use gerente, supervisor ou operado\n")
         return
     if not senha.strip():
         print("❌ Senha obrigatória\n")
@@ -83,8 +101,8 @@ def cria_usuario(nome, senha, salario, nivel_acesso):
         with conectar_db() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO usuarios (nome, senha_hash, salario, nivel_acesso, ativo) VALUES (?, ?, ?, ?, 1)",
-                (nome, senha_hash, salario, nivel_acesso)
+                "INSERT INTO usuarios (nome, senha_hash, salario, cargo, ativo) VALUES (?, ?, ?, ?, 1)",
+                (nome, senha_hash, salario, cargo)
             )
         print(f"✅ Usuário {nome} criado com sucesso\n")
     except sqlite3.IntegrityError:
@@ -97,27 +115,29 @@ def verificar_acesso(nome, senha):
     with conectar_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT nivel_acesso FROM usuarios WHERE nome = ? AND senha_hash = ? AND ativo = 1",
+            "SELECT cargo FROM usuarios WHERE nome = ? AND senha_hash = ? AND ativo = 1",
             (nome, senha_hash)
         )
         resultado = cursor.fetchone()
 
         if resultado is not None:
-            nivel_acesso = resultado[0]
-            print(f"✅ Acesso concedido! Nível de acesso: {nivel_acesso}\n")
-            return nivel_acesso
+            cargo = resultado[0]
+            print(f"✅ Acesso concedido! Cargo: {cargo}\n")
+            return cargo
         else:
             print(f"❌ Acesso negado! Nome ou senha incorretos\n")
             return None
     
-def alterar_acesso(nivel_logado, nome_alvo, novo_nivel):
+def alterar_acesso(cargo_logado, nome_alvo, novo_cargo):
     try:
-        if nivel_logado != 1:
-            print("❌ Apenas nível 1 (gerente) pode alterar nível de acesso\n")
+        novo_cargo = novo_cargo.strip().lower()
+
+        if cargo_logado != "gerente":
+            print("❌ Apenas gerente pode alterar cargo\n")
             return
 
-        if novo_nivel not in [1, 2, 3]:
-            print(f"❌ Nível inválido! Use 1, 2 ou 3\n")
+        if novo_cargo not in CARGOS_VALIDOS:
+            print(f"❌ Cargo inválido! Use gerente, supervisor ou operado\n")
             return
         
         with conectar_db() as conn:
@@ -126,9 +146,9 @@ def alterar_acesso(nivel_logado, nome_alvo, novo_nivel):
             resultado = cursor.fetchone()
 
             if resultado is not None:
-                cursor.execute("UPDATE usuarios SET nivel_acesso = ? WHERE nome = ?", (novo_nivel, nome_alvo))
+                cursor.execute("UPDATE usuarios SET cargo = ? WHERE nome = ?", (novo_cargo, nome_alvo))
                 conn.commit()
-                print(f"✅ Nível de acesso de {nome_alvo} alterado para {novo_nivel}\n")
+                print(f"✅ Cargo de {nome_alvo} alterado para {novo_cargo}\n")
             else:
                 print(f"❌ Usuário {nome_alvo} não encontrado ou inativo\n")
     except Exception as e:
@@ -137,13 +157,13 @@ def alterar_acesso(nivel_logado, nome_alvo, novo_nivel):
 def listar_usuarios():
     conn = conectar_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT nome, nivel_acesso FROM usuarios")
+    cursor.execute("SELECT nome, cargo FROM usuarios")
     usuarios = cursor.fetchall()
     conn.close()
     
     print("\n👥 Lista de Usuários:")
-    for nome, nivel in usuarios:
-        print(f"Nome: {nome} | Nível de Acesso: {nivel}")
+    for nome, cargo in usuarios:
+        print(f"Nome: {nome} | Cargo: {cargo}")
     print()
 
 def existe_usuario_cadastrado():
@@ -153,38 +173,38 @@ def existe_usuario_cadastrado():
         total = cursor.fetchone()[0]
     return total > 0
 
-def pode_inserir(nivel):
-    return nivel in [1, 2]
+def pode_inserir(cargo):
+    return cargo in ["gerente", "supervisor"]
 
-def pode_deletar(nivel):
-    return nivel in [1, 2]
+def pode_deletar(cargo):
+    return cargo in ["gerente", "supervisor"]
 
-def pode_visualizar(nivel):
-    return nivel in [1, 2, 3]
+def pode_visualizar(cargo):
+    return cargo in CARGOS_VALIDOS
 
 def login_usuario():
     print("\n🔐 Login de Usuário")
     nome = input("Nome: ").strip()
     senha = input("Senha: ").strip()
-    nivel = verificar_acesso(nome, senha)
-    if nivel is not None:
+    cargo = verificar_acesso(nome, senha)
+    if cargo is not None:
         print(f"👋 Bem-vindo: {nome}")
-        return nome, nivel
+        return nome, cargo
     return None, None
 
 def menu_acesso():
     nome_logado = None
-    nivel_logado = None
+    cargo_logado = None
 
     while True:
         print("\n📋 Menu de Acesso")
         if nome_logado is not None:
-            print(f"👤 Logado como: {nome_logado} | Nível: {nivel_logado}")
+            print(f"👤 Logado como: {nome_logado} | Cargo: {cargo_logado}")
         else:
             print("👤 Nenhum usuário logado")
         print("1. Login")
         print("2. Criar usuário")
-        print("3. Alterar nível de acesso")
+        print("3. Alterar cargo")
         print("4. Listar usuários")
         print("5. Sair")
 
@@ -192,42 +212,42 @@ def menu_acesso():
 
         try:
             if escolha == "1":
-                nome_logado, nivel_logado = login_usuario()
+                nome_logado, cargo_logado = login_usuario()
             elif escolha == "2":
                 if not existe_usuario_cadastrado():
-                    print("\n⚙️ Primeiro usuário do sistema (será criado como nível 1)")
+                    print("\n⚙️ Primeiro usuário do sistema (será criado como gerente)")
                     nome = input("Nome do usuário: ").strip()
                     senha = input("Senha do usuário: ").strip()
                     salario = float(input("Salário do usuário: ").strip())
-                    cria_usuario(nome, senha, salario, 1)
+                    cria_usuario(nome, senha, salario, "gerente")
                     continue
 
-                if nivel_logado is None:
+                if cargo_logado is None:
                     print("❌ Faça login antes de criar usuários\n")
                     continue
-                if nivel_logado != 1:
-                    print("❌ Apenas nível 1 (gerente) pode criar usuários\n")
+                if cargo_logado != "gerente":
+                    print("❌ Apenas gerente pode criar usuários\n")
                     continue
 
                 nome = input("Nome do usuário: ").strip()
                 senha = input("Senha do usuário: ").strip()
                 salario = float(input("Salário do usuário: ").strip())
-                nivel_acesso = int(input("Nível de acesso (1, 2 ou 3): ").strip())
-                cria_usuario(nome, senha, salario, nivel_acesso)
+                cargo = input("Cargo (gerente, supervisor ou operado): ").strip().lower()
+                cria_usuario(nome, senha, salario, cargo)
             elif escolha == "3":
-                if nivel_logado is None:
-                    print("❌ Faça login antes de alterar níveis\n")
+                if cargo_logado is None:
+                    print("❌ Faça login antes de alterar cargos\n")
                     continue
-                if nivel_logado != 1:
-                    print("❌ Apenas nível 1 (gerente) pode alterar níveis\n")
+                if cargo_logado != "gerente":
+                    print("❌ Apenas gerente pode alterar cargos\n")
                     continue
 
-                print(f"🔎 Usuário logado: {nome_logado} | Nível: {nivel_logado}")
-                nome_alvo = input("Nome do usuário para alterar nível: ").strip()
-                novo_nivel = int(input("Novo nível de acesso (1, 2 ou 3): ").strip())
-                alterar_acesso(nivel_logado, nome_alvo, novo_nivel)
+                print(f"🔎 Usuário logado: {nome_logado} | Cargo: {cargo_logado}")
+                nome_alvo = input("Nome do usuário para alterar cargo: ").strip()
+                novo_cargo = input("Novo cargo (gerente, supervisor ou operado): ").strip().lower()
+                alterar_acesso(cargo_logado, nome_alvo, novo_cargo)
             elif escolha == "4":
-                if nivel_logado is None:
+                if cargo_logado is None:
                     print("❌ Faça login antes de listar usuários\n")
                     continue
                 listar_usuarios()
